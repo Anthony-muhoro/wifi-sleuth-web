@@ -17,6 +17,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   Play, 
   Square, 
@@ -27,7 +28,9 @@ import {
   Download,
   Upload,
   Network,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Users,
+  Activity
 } from "lucide-react";
 import { cn } from '@/lib/utils';
 
@@ -35,18 +38,22 @@ interface ControlPanelProps {
   isScanning: boolean;
   onStartScan: () => void;
   onStopScan: () => void;
-  onClearPackets: () => void;
+  onClearData: () => void;
   onFilterChange: (filter: string) => void;
   onInterfaceChange: (iface: string) => void;
+  onViewChange: (view: string) => void;
+  activeView: string;
 }
 
 const ControlPanel: React.FC<ControlPanelProps> = ({
   isScanning,
   onStartScan,
   onStopScan,
-  onClearPackets,
+  onClearData,
   onFilterChange,
   onInterfaceChange,
+  onViewChange,
+  activeView
 }) => {
   const [filter, setFilter] = useState("");
   const [captureRate, setCaptureRate] = useState(100);
@@ -112,7 +119,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             variant="outline" 
             size="sm" 
             className="h-9" 
-            onClick={onClearPackets}
+            onClick={onClearData}
             disabled={isScanning}
           >
             <Trash2 className="h-4 w-4 mr-1" />
@@ -121,6 +128,27 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         </div>
         
         <div className="flex items-center space-x-2">
+          <Tabs 
+            defaultValue={activeView} 
+            className="w-[300px]"
+            onValueChange={onViewChange}
+          >
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="packets">
+                <Activity className="h-4 w-4 mr-1" />
+                Packets
+              </TabsTrigger>
+              <TabsTrigger value="users">
+                <Users className="h-4 w-4 mr-1" />
+                Users
+              </TabsTrigger>
+              <TabsTrigger value="details">
+                <SlidersHorizontal className="h-4 w-4 mr-1" />
+                Details
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          
           <div className="flex items-center space-x-1 text-xs">
             <Badge variant="outline" className="h-5 bg-muted/50">
               <Download className="h-3 w-3 mr-1 text-green-500" />

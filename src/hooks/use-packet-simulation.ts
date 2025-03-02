@@ -3,8 +3,29 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Packet, PacketType } from '@/components/PacketList';
 import { toast } from 'sonner';
 
+export interface UserSession {
+  site: string;
+  startTime: Date;
+  lastSeen: Date;
+  duration: number; // in seconds
+  dataSent: number;
+  dataReceived: number;
+}
+
+export interface UserStats {
+  ip: string;
+  totalDataSent: number;
+  totalDataReceived: number;
+  firstSeen: Date;
+  lastSeen: Date;
+  visitedSites: string[];
+  sessionDuration: number; // in seconds
+  sessions: UserSession[];
+}
+
 export const usePacketSimulation = () => {
   const [packets, setPackets] = useState<Packet[]>([]);
+  const [userStats, setUserStats] = useState<UserStats[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [startTime, setStartTime] = useState<Date | undefined>(undefined);
   const [selectedPacket, setSelectedPacket] = useState<string | undefined>(undefined);
@@ -35,7 +56,25 @@ export const usePacketSimulation = () => {
         
         switch(data.type) {
           case 'packet':
-            setPackets(prev => [data.packet, ...prev]);
+            const packet = data.packet;
+            // Convert string timestamps to Date objects
+            packet.timestamp = new Date(packet.timestamp);
+            setPackets(prev => [packet, ...prev]);
+            break;
+            
+          case 'user-stats':
+            // Convert string dates back to Date objects
+            const processedStats = data.data.map((stat: any) => ({
+              ...stat,
+              firstSeen: new Date(stat.firstSeen),
+              lastSeen: new Date(stat.lastSeen),
+              sessions: stat.sessions.map((session: any) => ({
+                ...session,
+                startTime: new Date(session.startTime),
+                lastSeen: new Date(session.lastSeen)
+              }))
+            }));
+            setUserStats(processedStats);
             break;
             
           case 'interfaces':
@@ -54,6 +93,10 @@ export const usePacketSimulation = () => {
           case 'scan-stopped':
             setIsScanning(false);
             toast.info('Scanning stopped');
+            break;
+            
+          case 'stats-cleared':
+            toast.info('User statistics cleared');
             break;
             
           case 'error':
@@ -114,10 +157,16 @@ export const usePacketSimulation = () => {
     }));
   }, [isScanning]);
   
-  // Function to clear all packets
-  const clearPackets = useCallback(() => {
+  // Function to clear all packets and stats
+  const clearData = useCallback(() => {
     setPackets([]);
     setSelectedPacket(undefined);
+    
+    if (wsRef.current) {
+      wsRef.current.send(JSON.stringify({
+        type: 'clear-stats'
+      }));
+    }
   }, []);
   
   // Function to handle filter changes
@@ -132,6 +181,7 @@ export const usePacketSimulation = () => {
 
   return {
     packets,
+    userStats,
     isScanning,
     startTime,
     selectedPacket,
@@ -140,7 +190,7 @@ export const usePacketSimulation = () => {
     availableInterfaces,
     startScan,
     stopScan,
-    clearPackets,
+    clearData,
     setSelectedPacket,
     handleFilterChange,
     handleInterfaceChange

@@ -9,9 +9,10 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// Store active packet capture sessions
+// Store active packet capture sessions and user tracking data
 let pcapSession = null;
 let activeInterface = 'en0'; // Default interface, will be configurable
+let userTrafficStats = new Map(); // Track per-user statistics
 
 // Function to determine packet protocol
 function determineProtocol(packet) {
@@ -42,8 +43,108 @@ function determineProtocol(packet) {
   return 'UNKNOWN';
 }
 
+// Function to extract HTTP host from packet if available
+function extractHostname(packet, protocol) {
+  if ((protocol === 'HTTP' || protocol === 'HTTPS') && packet.payload?.payload?.payload?.data) {
+    try {
+      // Try to extract Host header from HTTP request
+      const data = packet.payload.payload.payload.data.toString('utf8');
+      const hostMatch = data.match(/Host:\s*([^\r\n]+)/i);
+      if (hostMatch && hostMatch[1]) {
+        return hostMatch[1].trim();
+      }
+    } catch (e) {
+      // Silently fail if we can't parse the data
+    }
+  } else if (protocol === 'DNS' && packet.payload?.payload?.payload?.data) {
+    try {
+      // Try to parse DNS query
+      const dns = pcap.decode.dns(packet.payload.payload.payload.data);
+      if (dns.question && dns.question.length > 0) {
+        return dns.question[0].qname;
+      }
+    } catch (e) {
+      // Silently fail if we can't parse DNS
+    }
+  }
+  return null;
+}
+
+// Function to update user statistics
+function updateUserStats(sourceIP, destinationIP, hostname, protocol, size) {
+  // Update stats for source IP if it's on our local network
+  if (sourceIP.startsWith('192.168.') || sourceIP.startsWith('10.') || sourceIP.startsWith('172.16.')) {
+    if (!userTrafficStats.has(sourceIP)) {
+      userTrafficStats.set(sourceIP, {
+        totalDataSent: 0,
+        totalDataReceived: 0,
+        firstSeen: new Date(),
+        lastSeen: new Date(),
+        visitedSites: new Set(),
+        sessions: new Map()
+      });
+    }
+    
+    const stats = userTrafficStats.get(sourceIP);
+    stats.totalDataSent += size;
+    stats.lastSeen = new Date();
+    
+    if (hostname) {
+      stats.visitedSites.add(hostname);
+      
+      // Track session for this site
+      if (!stats.sessions.has(hostname)) {
+        stats.sessions.set(hostname, {
+          startTime: new Date(),
+          lastSeen: new Date(),
+          dataSent: 0,
+          dataReceived: 0
+        });
+      }
+      
+      const session = stats.sessions.get(hostname);
+      session.lastSeen = new Date();
+      session.dataSent += size;
+    }
+  }
+  
+  // Update stats for destination IP if it's on our local network
+  if (destinationIP.startsWith('192.168.') || destinationIP.startsWith('10.') || destinationIP.startsWith('172.16.')) {
+    if (!userTrafficStats.has(destinationIP)) {
+      userTrafficStats.set(destinationIP, {
+        totalDataSent: 0,
+        totalDataReceived: 0,
+        firstSeen: new Date(),
+        lastSeen: new Date(),
+        visitedSites: new Set(),
+        sessions: new Map()
+      });
+    }
+    
+    const stats = userTrafficStats.get(destinationIP);
+    stats.totalDataReceived += size;
+    stats.lastSeen = new Date();
+    
+    if (hostname) {
+      // Also track the hostname for received data
+      if (!stats.sessions.has(hostname)) {
+        stats.sessions.set(hostname, {
+          startTime: new Date(),
+          lastSeen: new Date(),
+          dataSent: 0,
+          dataReceived: 0
+        });
+      }
+      
+      const session = stats.sessions.get(hostname);
+      session.lastSeen = new Date();
+      session.dataReceived += size;
+    }
+  }
+}
+
 // Function to format packet info based on protocol
-function getPacketInfo(packet, protocol) {
+function getPacketInfo(packet, protocol, hostname) {
   let info = '';
   
   try {
@@ -58,13 +159,20 @@ function getPacketInfo(packet, protocol) {
       if (tcp.flags.urg) flags.push('URG');
       
       info = `[${flags.join(', ')}] Seq=${tcp.seqno} Ack=${tcp.ackno} Win=${tcp.window} Len=${tcp.data_bytes}`;
+      if (hostname) {
+        info = `Host: ${hostname} - ${info}`;
+      }
     } else if (protocol === 'UDP') {
       const udp = packet.payload.payload.payload;
       info = `Length=${udp.length}`;
+      if (hostname) {
+        info = `Host: ${hostname} - ${info}`;
+      }
     } else if (protocol === 'HTTP' || protocol === 'HTTPS') {
-      info = protocol === 'HTTP' ? 'HTTP Request/Response' : 'TLS Encrypted Data';
+      info = hostname ? `Host: ${hostname} - ${protocol === 'HTTP' ? 'HTTP Request/Response' : 'TLS Encrypted Data'}` : 
+             (protocol === 'HTTP' ? 'HTTP Request/Response' : 'TLS Encrypted Data');
     } else if (protocol === 'DNS') {
-      info = 'DNS Query/Response';
+      info = hostname ? `Query: ${hostname}` : 'DNS Query/Response';
     } else if (protocol === 'ICMP') {
       const icmp = packet.payload.payload;
       info = `Type=${icmp.type} Code=${icmp.code}`;
@@ -78,6 +186,41 @@ function getPacketInfo(packet, protocol) {
   
   return info;
 }
+
+// Send user statistics to clients on a regular interval
+setInterval(() => {
+  // Convert Map and Set to arrays for JSON serialization
+  const userStats = [...userTrafficStats.entries()].map(([ip, stats]) => {
+    return {
+      ip,
+      totalDataSent: stats.totalDataSent,
+      totalDataReceived: stats.totalDataReceived,
+      firstSeen: stats.firstSeen,
+      lastSeen: stats.lastSeen,
+      visitedSites: [...stats.visitedSites],
+      sessionDuration: (stats.lastSeen - stats.firstSeen) / 1000, // in seconds
+      sessions: [...stats.sessions.entries()].map(([site, session]) => {
+        return {
+          site,
+          startTime: session.startTime,
+          lastSeen: session.lastSeen,
+          duration: (session.lastSeen - session.startTime) / 1000, // in seconds
+          dataSent: session.dataSent,
+          dataReceived: session.dataReceived
+        };
+      })
+    };
+  });
+  
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({
+        type: 'user-stats',
+        data: userStats
+      }));
+    }
+  });
+}, 5000); // Send stats every 5 seconds
 
 // WebSocket connection handler
 wss.on('connection', (ws) => {
@@ -151,8 +294,18 @@ wss.on('connection', (ws) => {
                 }
               }
               
+              // Extract hostname if available
+              const hostname = extractHostname(packet, protocol);
+              
+              // Update user statistics
+              if (source && destination) {
+                const sourceIP = source.split(':')[0];
+                const destIP = destination.split(':')[0];
+                updateUserStats(sourceIP, destIP, hostname, protocol, size);
+              }
+              
               // Get detailed info based on protocol
-              const info = getPacketInfo(packet, protocol);
+              const info = getPacketInfo(packet, protocol, hostname);
               
               // Create packet object
               const packetObj = {
@@ -162,6 +315,7 @@ wss.on('connection', (ws) => {
                 destination,
                 protocol,
                 size,
+                hostname: hostname || null,
                 info,
                 // Add raw packet data (as hex string)
                 raw: Buffer.from(rawPacket).toString('hex')
@@ -200,6 +354,14 @@ wss.on('connection', (ws) => {
             type: 'scan-stopped'
           }));
         }
+        break;
+      
+      case 'clear-stats':
+        // Clear user traffic statistics
+        userTrafficStats.clear();
+        ws.send(JSON.stringify({
+          type: 'stats-cleared'
+        }));
         break;
         
       case 'get-interfaces':

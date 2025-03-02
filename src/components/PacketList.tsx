@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,6 +14,7 @@ export interface Packet {
   protocol: PacketType;
   size: number;
   info: string;
+  hostname?: string | null;
   raw?: string; // Hex string of raw packet data
 }
 
@@ -98,6 +100,11 @@ export const PacketList: React.FC<PacketListProps> = ({
                   <span className="text-sm font-medium truncate">{packet.destination}</span>
                 </div>
                 <span className="text-xs text-muted-foreground truncate">{packet.info}</span>
+                {packet.hostname && (
+                  <span className="text-xs text-green-500 font-medium truncate">
+                    {packet.hostname}
+                  </span>
+                )}
               </div>
             </div>
             
