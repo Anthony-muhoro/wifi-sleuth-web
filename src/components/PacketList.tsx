@@ -1,10 +1,9 @@
-
 import React from 'react';
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
-export type PacketType = 'TCP' | 'UDP' | 'ICMP' | 'HTTP' | 'HTTPS' | 'ARP' | 'DNS';
+export type PacketType = 'TCP' | 'UDP' | 'ICMP' | 'HTTP' | 'HTTPS' | 'ARP' | 'DNS' | 'UNKNOWN';
 
 export interface Packet {
   id: string;
@@ -14,6 +13,7 @@ export interface Packet {
   protocol: PacketType;
   size: number;
   info: string;
+  raw?: string; // Hex string of raw packet data
 }
 
 interface PacketListProps {
@@ -81,7 +81,7 @@ export const PacketList: React.FC<PacketListProps> = ({
             <div className="flex items-center space-x-4 overflow-hidden">
               <div className="flex flex-col space-y-1 min-w-[90px]">
                 <span className="text-xs font-medium text-muted-foreground">
-                  {formatTime(packet.timestamp)}
+                  {formatTime(new Date(packet.timestamp))}
                 </span>
                 <Badge 
                   variant="secondary" 
