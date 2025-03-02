@@ -51,13 +51,17 @@ export const PacketList: React.FC<PacketListProps> = ({
 
   // Format timestamp as HH:MM:SS.mmm
   const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('en-US', { 
+    // Format hours, minutes, seconds
+    const timeString = date.toLocaleTimeString('en-US', { 
       hour12: false,
       hour: '2-digit',
       minute: '2-digit',
-      second: '2-digit',
-      fractionalSecondDigits: 3
+      second: '2-digit'
     });
+    
+    // Manually add milliseconds
+    const milliseconds = String(date.getMilliseconds()).padStart(3, '0');
+    return `${timeString}.${milliseconds}`;
   };
 
   return (
